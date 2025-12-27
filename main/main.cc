@@ -393,14 +393,14 @@ extern "C" void app_main(void)
 
                     if (last_alternate_angle_was_positive)
                     {
-                        offset = -90;   // 这一次偏移-90度
-                        angle_desc = "-90度偏移";
+                        offset = 90;    // 这一次偏移+90度
+                        angle_desc = "+90度偏移";
                         last_alternate_angle_was_positive = false;
                     }
                     else
                     {
-                        offset = 45;    // 这一次偏移+45度
-                        angle_desc = "+45度偏移";
+                        offset = -45;   // 这一次偏移-45度
+                        angle_desc = "-45度偏移";
                         last_alternate_angle_was_positive = true;
                     }
 
