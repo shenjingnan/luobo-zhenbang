@@ -4,17 +4,14 @@
  *
  * 本程序实现了命令词识别和舵机控制功能，包括：
  * 1. 命令词识别 - 支持"帮我开灯"、"帮我关灯"等语音指令
- * 2. 音频反馈播放 - 通过MAX98357A功放播放确认音频
- * 3. 舵机控制 - 根据语音指令控制舵机旋转
+ * 2. 舵机控制 - 根据语音指令控制舵机旋转
  *
  * 硬件配置：
  * - ESP32-S3-DevKitC-1开发板（需要PSRAM版本）
  * - INMP441数字麦克风（音频输入）
  *   连接方式：VDD->3.3V, GND->GND, SD->GPIO6, WS->GPIO4, SCK->GPIO5
- * - MAX98357A数字功放（音频输出）
- *   连接方式：DIN->GPIO7, BCLK->GPIO15, LRC->GPIO16, VIN->3.3V, GND->GND
- * - 舵机（GPIO18控制）
- *   连接方式：红线->5V/3.3V, 棕线->GND, 橙线->GPIO18
+ * - 舵机（GPIO1控制）
+ *   连接方式：红线->5V/3.3V, 棕线->GND, 橙线->GPIO1
  *
  * 音频参数：
  * - 采样率：16kHz
@@ -209,20 +206,7 @@ extern "C" void app_main(void)
     }
     ESP_LOGI(TAG, "✓ INMP441麦克风初始化成功");
 
-    // ========== 第三步：初始化音频播放功能 ==========
-    ESP_LOGI(TAG, "正在初始化音频播放功能...");
-    ESP_LOGI(TAG, "音频播放参数: 采样率16kHz, 单声道, 16位深度");
-
-    ret = bsp_audio_init(16000, 1, 16); // 16kHz, 单声道, 16位
-    if (ret != ESP_OK)
-    {
-        ESP_LOGE(TAG, "音频播放初始化失败: %s", esp_err_to_name(ret));
-        ESP_LOGE(TAG, "请检查MAX98357A硬件连接: DIN->GPIO7, BCLK->GPIO15, LRC->GPIO16");
-        return;
-    }
-    ESP_LOGI(TAG, "✓ 音频播放初始化成功");
-
-    // ========== 第四步：初始化语音识别模型 ==========
+    // ========== 第三步：初始化语音识别模型 ==========
     ESP_LOGI(TAG, "正在初始化命令词识别模型...");
 
     // 检查内存状态
@@ -274,7 +258,7 @@ extern "C" void app_main(void)
         return;
     }
 
-    // ========== 第五步：初始化命令词识别模型 ==========
+    // ========== 第四步：初始化命令词识别模型 ==========
 
     // 获取中文命令词识别模型（MultiNet7）
     char *mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX, ESP_MN_CHINESE);
@@ -313,7 +297,7 @@ extern "C" void app_main(void)
     }
     ESP_LOGI(TAG, "✓ 命令词配置完成");
 
-    // ========== 第六步：准备音频缓冲区 ==========
+    // ========== 第五步：准备音频缓冲区 ==========
     // 获取模型要求的音频数据块大小（样本数 × 每样本字节数）
     int audio_chunksize = multinet->get_samp_chunksize(mn_model_data) * sizeof(int16_t);
 
@@ -336,7 +320,7 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "  - '纸巾': 随机旋转45度或-90度");
     ESP_LOGI(TAG, "  - '萝卜': 随机旋转45度或-90度");
 
-    // ========== 第七步：主循环 - 实时音频采集与命令词识别 ==========
+    // ========== 第六步：主循环 - 实时音频采集与命令词识别 ==========
     while (1)
     {
         // 从INMP441麦克风获取一帧音频数据
