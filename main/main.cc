@@ -2,11 +2,10 @@
  * @file main.cc
  * @brief ESP32-S3 智能语音助手 - 舵机控制主程序
  *
- * 本程序实现了完整的智能语音助手功能，包括：
- * 1. 语音唤醒检测 - 支持"你好小智"等多种唤醒词
- * 2. 命令词识别 - 支持"帮我开灯"、"帮我关灯"、"拜拜"等语音指令
- * 3. 音频反馈播放 - 通过MAX98357A功放播放确认音频
- * 4. 舵机控制 - 根据语音指令控制舵机旋转
+ * 本程序实现了命令词识别和舵机控制功能，包括：
+ * 1. 命令词识别 - 支持"帮我开灯"、"帮我关灯"等语音指令
+ * 2. 音频反馈播放 - 通过MAX98357A功放播放确认音频
+ * 3. 舵机控制 - 根据语音指令控制舵机旋转
  *
  * 硬件配置：
  * - ESP32-S3-DevKitC-1开发板（需要PSRAM版本）
@@ -23,7 +22,6 @@
  * - 位深度：16位
  *
  * 使用的AI模型：
- * - 唤醒词检测：WakeNet9 "你好小智"模型
  * - 命令词识别：MultiNet7中文命令词识别模型
  */
 
@@ -33,8 +31,6 @@ extern "C"
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_wn_iface.h"           // 唤醒词检测接口
-#include "esp_wn_models.h"          // 唤醒词模型管理
 #include "esp_mn_iface.h"           // 命令词识别接口
 #include "esp_mn_models.h"          // 命令词模型管理
 #include "esp_mn_speech_commands.h" // 命令词配置
@@ -42,10 +38,8 @@ extern "C"
 #include "model_path.h"             // 模型路径定义
 #include "bsp_board.h"              // 板级支持包，INMP441麦克风驱动
 #include "esp_log.h"                // ESP日志系统
-#include "mock_voices/welcome.h"    // 欢迎音频数据文件
 #include "mock_voices/light_on.h"   // 开灯音频数据文件
 #include "mock_voices/light_off.h"  // 关灯音频数据文件
-#include "mock_voices/byebye.h"     // 再见音频数据文件
 #include "driver/gpio.h"            // GPIO驱动
 #include "driver/ledc.h"            // LEDC PWM驱动，用于舵机控制
 }
@@ -54,17 +48,9 @@ extern "C"
 
 static const char *TAG = "舵机控制"; // 日志标签
 
-// 系统状态定义
-typedef enum
-{
-    STATE_WAITING_WAKEUP = 0,  // 等待唤醒词
-    STATE_WAITING_COMMAND = 1, // 等待命令词
-} system_state_t;
-
 // 命令词ID定义（对应commands_cn.txt中的ID）
 #define COMMAND_TURN_OFF_LIGHT 308 // "帮我关灯"
 #define COMMAND_TURN_ON_LIGHT 309  // "帮我开灯"
-#define COMMAND_BYE_BYE 314        // "拜拜"
 
 // 命令词配置结构体
 typedef struct
@@ -78,17 +64,13 @@ typedef struct
 static const command_config_t custom_commands[] = {
     {COMMAND_TURN_ON_LIGHT, "bang wo kai deng", "帮我开灯"},
     {COMMAND_TURN_OFF_LIGHT, "bang wo guan deng", "帮我关灯"},
-    {COMMAND_BYE_BYE, "bai bai", "拜拜"},
 };
 
 #define CUSTOM_COMMANDS_COUNT (sizeof(custom_commands) / sizeof(custom_commands[0]))
 
 // 全局变量
-static system_state_t current_state = STATE_WAITING_WAKEUP;
 static esp_mn_iface_t *multinet = NULL;
 static model_iface_data_t *mn_model_data = NULL;
-static TickType_t command_timeout_start = 0;
-static const TickType_t COMMAND_TIMEOUT_MS = 5000; // 5秒超时
 
 // 舵机控制器实例
 static ServoController servo_controller;
@@ -199,33 +181,10 @@ static const char *get_command_description(int command_id)
 }
 
 /**
- * @brief 执行退出逻辑
- *
- * 播放再见音频并返回等待唤醒状态
- */
-static void execute_exit_logic(void)
-{
-    // 播放再见音频
-    ESP_LOGI(TAG, "播放再见音频...");
-    esp_err_t audio_ret = bsp_play_audio(byebye, byebye_len);
-    if (audio_ret == ESP_OK)
-    {
-        ESP_LOGI(TAG, "✓ 再见音频播放成功");
-    }
-    else
-    {
-        ESP_LOGE(TAG, "再见音频播放失败: %s", esp_err_to_name(audio_ret));
-    }
-
-    current_state = STATE_WAITING_WAKEUP;
-    ESP_LOGI(TAG, "返回等待唤醒状态，请说出唤醒词 '你好小智'");
-}
-
-/**
  * @brief 应用程序主入口函数
  *
- * 初始化INMP441麦克风硬件，加载唤醒词检测模型，
- * 然后进入主循环进行实时音频采集和唤醒词检测。
+ * 初始化INMP441麦克风硬件，加载命令词识别模型，
+ * 然后进入主循环进行实时音频采集和命令词识别。
  */
 extern "C" void app_main(void)
 {
@@ -264,7 +223,7 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "✓ 音频播放初始化成功");
 
     // ========== 第四步：初始化语音识别模型 ==========
-    ESP_LOGI(TAG, "正在初始化唤醒词检测模型...");
+    ESP_LOGI(TAG, "正在初始化命令词识别模型...");
 
     // 检查内存状态
     size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -315,37 +274,7 @@ extern "C" void app_main(void)
         return;
     }
 
-    // 自动选择sdkconfig中配置的唤醒词模型（如果配置了多个模型则选择第一个）
-    char *model_name = esp_srmodel_filter(models, ESP_WN_PREFIX, NULL);
-    if (model_name == NULL)
-    {
-        ESP_LOGE(TAG, "未找到任何唤醒词模型！");
-        ESP_LOGE(TAG, "请确保已正确配置并烧录唤醒词模型文件");
-        ESP_LOGE(TAG, "可通过 'idf.py menuconfig' 配置唤醒词模型");
-        return;
-    }
-
-    ESP_LOGI(TAG, "✓ 选择唤醒词模型: %s", model_name);
-
-    // 获取唤醒词检测接口
-    esp_wn_iface_t *wakenet = (esp_wn_iface_t *)esp_wn_handle_from_name(model_name);
-    if (wakenet == NULL)
-    {
-        ESP_LOGE(TAG, "获取唤醒词接口失败，模型: %s", model_name);
-        return;
-    }
-
-    // 创建唤醒词模型数据实例
-    // DET_MODE_90: 检测模式，90%置信度阈值，平衡准确率和误触发率
-    model_iface_data_t *model_data = wakenet->create(model_name, DET_MODE_90);
-    if (model_data == NULL)
-    {
-        ESP_LOGE(TAG, "创建唤醒词模型数据失败");
-        return;
-    }
-
     // ========== 第五步：初始化命令词识别模型 ==========
-    ESP_LOGI(TAG, "正在初始化命令词识别模型...");
 
     // 获取中文命令词识别模型（MultiNet7）
     char *mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX, ESP_MN_CHINESE);
@@ -386,7 +315,7 @@ extern "C" void app_main(void)
 
     // ========== 第六步：准备音频缓冲区 ==========
     // 获取模型要求的音频数据块大小（样本数 × 每样本字节数）
-    int audio_chunksize = wakenet->get_samp_chunksize(model_data) * sizeof(int16_t);
+    int audio_chunksize = multinet->get_samp_chunksize(mn_model_data) * sizeof(int16_t);
 
     // 分配音频数据缓冲区内存
     int16_t *buffer = (int16_t *)malloc(audio_chunksize);
@@ -399,16 +328,12 @@ extern "C" void app_main(void)
 
     // 显示系统配置信息
     ESP_LOGI(TAG, "✓ 智能语音助手系统配置完成:");
-    ESP_LOGI(TAG, "  - 唤醒词模型: %s", model_name);
     ESP_LOGI(TAG, "  - 命令词模型: %s", mn_name);
     ESP_LOGI(TAG, "  - 音频块大小: %d 字节", audio_chunksize);
-    ESP_LOGI(TAG, "  - 检测置信度: 90%%");
-    ESP_LOGI(TAG, "正在启动智能语音助手...");
-    ESP_LOGI(TAG, "请对着麦克风说出唤醒词 '你好小智'");
+    ESP_LOGI(TAG, "系统已就绪，持续监听命令词...");
+    ESP_LOGI(TAG, "支持的指令: '帮我开灯'（顺时针45°）、'帮我关灯'（逆时针45°）");
 
-    // ========== 第七步：主循环 - 实时音频采集与语音识别 ==========
-    ESP_LOGI(TAG, "系统启动完成，等待唤醒词 '你好小智'...");
-
+    // ========== 第七步：主循环 - 实时音频采集与命令词识别 ==========
     while (1)
     {
         // 从INMP441麦克风获取一帧音频数据
@@ -422,115 +347,55 @@ extern "C" void app_main(void)
             continue;
         }
 
-        if (current_state == STATE_WAITING_WAKEUP)
+        // 直接进行命令词识别
+        esp_mn_state_t mn_state = multinet->detect(mn_model_data, buffer);
+
+        if (mn_state == ESP_MN_STATE_DETECTED)
         {
-            // 第一阶段：唤醒词检测
-            wakenet_state_t wn_state = wakenet->detect(model_data, buffer);
-
-            if (wn_state == WAKENET_DETECTED)
+            // 获取识别结果
+            esp_mn_results_t *mn_result = multinet->get_results(mn_model_data);
+            if (mn_result->num > 0)
             {
-                ESP_LOGI(TAG, "🎉 检测到唤醒词 '你好小智'！");
-                printf("=== 唤醒词检测成功！模型: %s ===\n", model_name);
+                int command_id = mn_result->command_id[0];
+                float prob = mn_result->prob[0];
 
-                // 播放欢迎音频
-                ESP_LOGI(TAG, "播放欢迎音频...");
-                esp_err_t audio_ret = bsp_play_audio(welcome, welcome_len);
-                if (audio_ret != ESP_OK)
+                const char *cmd_desc = get_command_description(command_id);
+                ESP_LOGI(TAG, "检测到命令词: ID=%d, 置信度=%.2f, 内容=%s, 命令='%s'",
+                         command_id, prob, mn_result->string, cmd_desc);
+
+                // 处理命令
+                if (command_id == COMMAND_TURN_ON_LIGHT)
                 {
-                    ESP_LOGE(TAG, "音频播放失败: %s", esp_err_to_name(audio_ret));
+                    ESP_LOGI(TAG, "执行开灯命令 - 舵机顺时针旋转45度");
+                    servo_controller.rotate(45); // 顺时针旋转45度
+                    vTaskDelay(pdMS_TO_TICKS(800));
+                    servo_controller.rotate(-45); // 逆时针旋转45度回到原位
+
+                    // 播放开灯确认音频
+                    esp_err_t audio_ret = bsp_play_audio(light_on, light_on_len);
+                    if (audio_ret == ESP_OK)
+                    {
+                        ESP_LOGI(TAG, "✓ 舵机旋转确认音频播放成功");
+                    }
                 }
-                else
+                else if (command_id == COMMAND_TURN_OFF_LIGHT)
                 {
-                    ESP_LOGI(TAG, "✓ 欢迎音频播放成功");
-                }
+                    ESP_LOGI(TAG, "执行关灯命令 - 舵机逆时针旋转45度");
+                    servo_controller.rotate(-45); // 逆时针旋转45度
+                    vTaskDelay(pdMS_TO_TICKS(800));
+                    servo_controller.rotate(45); // 顺时针旋转45度回到原位
 
-                // 切换到命令词识别状态
-                current_state = STATE_WAITING_COMMAND;
-                command_timeout_start = xTaskGetTickCount();
-                multinet->clean(mn_model_data); // 清理命令词识别缓冲区
-                ESP_LOGI(TAG, "进入命令词识别模式，请说出指令...");
-                ESP_LOGI(TAG, "支持的指令: '帮我开灯'（顺时针45°）、'帮我关灯'（逆时针45°）或 '拜拜'");
-            }
-        }
-        else if (current_state == STATE_WAITING_COMMAND)
-        {
-            // 第二阶段：命令词识别
-            esp_mn_state_t mn_state = multinet->detect(mn_model_data, buffer);
-
-            if (mn_state == ESP_MN_STATE_DETECTED)
-            {
-                // 获取识别结果
-                esp_mn_results_t *mn_result = multinet->get_results(mn_model_data);
-                if (mn_result->num > 0)
-                {
-                    int command_id = mn_result->command_id[0];
-                    float prob = mn_result->prob[0];
-
-                    const char *cmd_desc = get_command_description(command_id);
-                    ESP_LOGI(TAG, "🎯 检测到命令词: ID=%d, 置信度=%.2f, 内容=%s, 命令='%s'",
-                             command_id, prob, mn_result->string, cmd_desc);
-
-                    // 处理具体命令
-                    if (command_id == COMMAND_TURN_ON_LIGHT)
+                    // 播放关灯确认音频
+                    esp_err_t audio_ret = bsp_play_audio(light_off, light_off_len);
+                    if (audio_ret == ESP_OK)
                     {
-                        ESP_LOGI(TAG, "🔄 执行开灯命令 - 舵机顺时针旋转45度");
-                        servo_controller.rotate(45); // 顺时针旋转45度
-                        vTaskDelay(pdMS_TO_TICKS(800));
-                        servo_controller.rotate(-45); // 逆时针旋转45度回到原位
-
-                        // 播放开灯确认音频
-                        esp_err_t audio_ret = bsp_play_audio(light_on, light_on_len);
-                        if (audio_ret == ESP_OK)
-                        {
-                            ESP_LOGI(TAG, "✓ 舵机旋转确认音频播放成功");
-                        }
-                    }
-                    else if (command_id == COMMAND_TURN_OFF_LIGHT)
-                    {
-                        ESP_LOGI(TAG, "🔄 执行关灯命令 - 舵机逆时针旋转45度");
-                        servo_controller.rotate(-45); // 逆时针旋转45度
-                        vTaskDelay(pdMS_TO_TICKS(800));
-                        servo_controller.rotate(45); // 顺时针旋转45度回到原位
-
-                        // 播放关灯确认音频
-                        esp_err_t audio_ret = bsp_play_audio(light_off, light_off_len);
-                        if (audio_ret == ESP_OK)
-                        {
-                            ESP_LOGI(TAG, "✓ 舵机旋转确认音频播放成功");
-                        }
-                    }
-                    else if (command_id == COMMAND_BYE_BYE)
-                    {
-                        ESP_LOGI(TAG, "👋 检测到拜拜命令，立即退出");
-                        execute_exit_logic();
-                        continue; // 跳过后续的超时重置逻辑，直接进入下一次循环
-                    }
-                    else
-                    {
-                        ESP_LOGW(TAG, "⚠️  未知命令ID: %d", command_id);
+                        ESP_LOGI(TAG, "✓ 舵机旋转确认音频播放成功");
                     }
                 }
 
-                // 命令处理完成，重新开始5秒倒计时，继续等待下一个命令
-                command_timeout_start = xTaskGetTickCount();
-                multinet->clean(mn_model_data); // 清理命令词识别缓冲区
-                ESP_LOGI(TAG, "舵机控制命令执行完成，重新开始5秒倒计时");
-                ESP_LOGI(TAG, "可以继续说出指令: '帮我开灯'（顺时针45°）、'帮我关灯'（逆时针45°）或 '拜拜'");
-            }
-            else if (mn_state == ESP_MN_STATE_TIMEOUT)
-            {
-                ESP_LOGW(TAG, "⏰ 命令词识别超时");
-                execute_exit_logic();
-            }
-            else
-            {
-                // 检查手动超时
-                TickType_t current_time = xTaskGetTickCount();
-                if ((current_time - command_timeout_start) > pdMS_TO_TICKS(COMMAND_TIMEOUT_MS))
-                {
-                    ESP_LOGW(TAG, "⏰ 命令词等待超时 (%lu秒)", (unsigned long)(COMMAND_TIMEOUT_MS / 1000));
-                    execute_exit_logic();
-                }
+                // 清理缓冲区，继续监听下一个命令
+                multinet->clean(mn_model_data);
+                ESP_LOGI(TAG, "命令执行完成，继续监听...");
             }
         }
 
@@ -542,12 +407,6 @@ extern "C" void app_main(void)
     // 注意：由于主循环是无限循环，以下代码正常情况下不会执行
     // 仅在程序异常退出时进行资源清理
     ESP_LOGI(TAG, "正在清理系统资源...");
-
-    // 销毁唤醒词模型数据
-    if (model_data != NULL)
-    {
-        wakenet->destroy(model_data);
-    }
 
     // 释放音频缓冲区内存
     if (buffer != NULL)
