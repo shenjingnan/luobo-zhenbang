@@ -30,15 +30,13 @@ extern "C" {
 
 /**
  * @brief 舵机控制器类
- * 
+ *
  * 封装了舵机控制的所有功能，提供简洁易用的API接口
+ * 支持多舵机配置，通过构造函数参数指定GPIO、通道和定时器
  */
 class ServoController {
 public:
-    // 舵机控制GPIO和PWM配置常量
-    static constexpr gpio_num_t SERVO_GPIO = GPIO_NUM_1;                 // 舵机PWM信号连接到GPIO18
-    static constexpr ledc_timer_t SERVO_LEDC_TIMER = LEDC_TIMER_0;        // 使用LEDC定时器0
-    static constexpr ledc_channel_t SERVO_LEDC_CHANNEL = LEDC_CHANNEL_0;  // 使用LEDC通道0
+    // 舵机PWM模式常量
     static constexpr ledc_mode_t SERVO_LEDC_MODE = LEDC_LOW_SPEED_MODE;   // 低速模式
     static constexpr uint32_t SERVO_PWM_FREQ = 50;                       // 舵机PWM频率50Hz
     static constexpr ledc_timer_bit_t SERVO_PWM_RESOLUTION = LEDC_TIMER_13_BIT; // 13位分辨率（8192级别）
@@ -46,7 +44,6 @@ public:
     // 舵机PWM脉宽定义（微秒）
     static constexpr int SERVO_MIN_PULSE_WIDTH = 500;     // 0度对应的脉宽（0.5ms）
     static constexpr int SERVO_MAX_PULSE_WIDTH = 2500;    // 180度对应的脉宽（2.5ms）
-    static constexpr int SERVO_CENTER_PULSE_WIDTH = 1000; // 45度对应的脉宽（1ms）
 
     // 角度范围常量
     static constexpr int MIN_ANGLE = 0;     // 最小角度
@@ -55,9 +52,17 @@ public:
 
 public:
     /**
-     * @brief 构造函数
+     * @brief 默认构造函数（GPIO_NUM_1, CHANNEL_0, TIMER_0）
      */
     ServoController();
+
+    /**
+     * @brief 参数化构造函数
+     * @param gpio 舵机PWM信号连接的GPIO引脚
+     * @param channel LEDC通道
+     * @param timer LEDC定时器（默认LEDC_TIMER_0）
+     */
+    ServoController(gpio_num_t gpio, ledc_channel_t channel, ledc_timer_t timer = LEDC_TIMER_0);
 
     /**
      * @brief 析构函数
@@ -140,7 +145,10 @@ private:
     int constrainAngle(int angle) const;
 
 private:
-    int current_angle_;      // 当前舵机角度
-    bool initialized_;       // 初始化状态标志
-    static const char* TAG;  // 日志标签
+    gpio_num_t servo_gpio_;        // 舵机GPIO引脚
+    ledc_channel_t servo_channel_;  // LEDC通道
+    ledc_timer_t servo_timer_;      // LEDC定时器
+    int current_angle_;             // 当前舵机角度
+    bool initialized_;              // 初始化状态标志
+    static const char* TAG;         // 日志标签
 };

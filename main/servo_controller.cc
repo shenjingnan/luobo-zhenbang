@@ -14,9 +14,22 @@
 // 静态成员变量定义
 const char* ServoController::TAG = "舵机控制器";
 
-ServoController::ServoController() 
-    : current_angle_(CENTER_ANGLE), initialized_(false) {
-    // 构造函数：初始化成员变量
+ServoController::ServoController()
+    : servo_gpio_(GPIO_NUM_1),
+      servo_channel_(LEDC_CHANNEL_0),
+      servo_timer_(LEDC_TIMER_0),
+      current_angle_(CENTER_ANGLE),
+      initialized_(false) {
+    // 默认构造函数：使用GPIO_NUM_1, CHANNEL_0, TIMER_0
+}
+
+ServoController::ServoController(gpio_num_t gpio, ledc_channel_t channel, ledc_timer_t timer)
+    : servo_gpio_(gpio),
+      servo_channel_(channel),
+      servo_timer_(timer),
+      current_angle_(CENTER_ANGLE),
+      initialized_(false) {
+    // 参数化构造函数：使用指定的GPIO、通道、定时器
 }
 
 ServoController::~ServoController() {
@@ -24,18 +37,19 @@ ServoController::~ServoController() {
 }
 
 esp_err_t ServoController::init() {
-    ESP_LOGI(TAG, "正在初始化舵机 (GPIO%d)...", SERVO_GPIO);
+    ESP_LOGI(TAG, "正在初始化舵机 (GPIO%d, 通道%d, 定时器%d)...",
+             servo_gpio_, servo_channel_, servo_timer_);
 
     // 配置LEDC定时器
     ledc_timer_config_t ledc_timer = {
         .speed_mode = SERVO_LEDC_MODE,
         .duty_resolution = SERVO_PWM_RESOLUTION,
-        .timer_num = SERVO_LEDC_TIMER,
+        .timer_num = servo_timer_,
         .freq_hz = SERVO_PWM_FREQ,
         .clk_cfg = LEDC_AUTO_CLK,
         .deconfigure = false
     };
-    
+
     esp_err_t ret = ledc_timer_config(&ledc_timer);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LEDC定时器配置失败: %s", esp_err_to_name(ret));
@@ -44,17 +58,17 @@ esp_err_t ServoController::init() {
 
     // 配置LEDC通道
     ledc_channel_config_t ledc_channel = {
-        .gpio_num = SERVO_GPIO,
+        .gpio_num = servo_gpio_,
         .speed_mode = SERVO_LEDC_MODE,
-        .channel = SERVO_LEDC_CHANNEL,
+        .channel = servo_channel_,
         .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = SERVO_LEDC_TIMER,
+        .timer_sel = servo_timer_,
         .duty = 0, // 初始占空比为0
         .hpoint = 0,
         .sleep_mode = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD, // 默认模式：无输出时不关闭电源域
         .flags = {0}
     };
-    
+
     ret = ledc_channel_config(&ledc_channel);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LEDC通道配置失败: %s", esp_err_to_name(ret));
@@ -94,9 +108,9 @@ esp_err_t ServoController::setAngle(int angle) {
     uint32_t duty = calculateDuty(angle);
 
     // 设置PWM占空比
-    esp_err_t ret = ledc_set_duty(SERVO_LEDC_MODE, SERVO_LEDC_CHANNEL, duty);
+    esp_err_t ret = ledc_set_duty(SERVO_LEDC_MODE, servo_channel_, duty);
     if (ret == ESP_OK) {
-        ledc_update_duty(SERVO_LEDC_MODE, SERVO_LEDC_CHANNEL);
+        ledc_update_duty(SERVO_LEDC_MODE, servo_channel_);
         current_angle_ = angle;
         ESP_LOGI(TAG, "舵机转动到 %d 度 (脉宽: %d us, 占空比: %lu)", 
                  angle, pulse_width, duty);

@@ -70,10 +70,11 @@ static esp_mn_iface_t *multinet = NULL;
 static model_iface_data_t *mn_model_data = NULL;
 
 // 舵机控制器实例
-static ServoController servo_controller;
+static ServoController servo_controller;                    // 舵机1: GPIO_NUM_1, CHANNEL_0
+static ServoController servo_controller_2(GPIO_NUM_2, LEDC_CHANNEL_1, LEDC_TIMER_0); // 舵机2: GPIO_NUM_2, CHANNEL_1
 
-// 用于"纸巾"和"萝卜"命令的切换状态
-static int last_alternating_angle = -90;  // 初始值为-90，下次将切换到45
+// 用于纸巾/萝卜命令的交替逻辑状态跟踪
+static bool last_alternate_angle_was_positive = true;
 
 /**
  * @brief 配置自定义命令词
@@ -189,10 +190,19 @@ static const char *get_command_description(int command_id)
 extern "C" void app_main(void)
 {
     // ========== 第一步：初始化舵机 ==========
+    // 初始化舵机1（GPIO1）- 真棒命令
     esp_err_t servo_ret = servo_controller.init();
     if (servo_ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "舵机初始化失败: %s", esp_err_to_name(servo_ret));
+        ESP_LOGE(TAG, "舵机1初始化失败: %s", esp_err_to_name(servo_ret));
+        return;
+    }
+
+    // 初始化舵机2（GPIO2）- 纸巾/萝卜命令
+    esp_err_t servo_ret_2 = servo_controller_2.init();
+    if (servo_ret_2 != ESP_OK)
+    {
+        ESP_LOGE(TAG, "舵机2初始化失败: %s", esp_err_to_name(servo_ret_2));
         return;
     }
 
@@ -317,11 +327,13 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "✓ 智能语音助手系统配置完成:");
     ESP_LOGI(TAG, "  - 命令词模型: %s", mn_name);
     ESP_LOGI(TAG, "  - 音频块大小: %d 字节", audio_chunksize);
+    ESP_LOGI(TAG, "  - 舵机1: GPIO_NUM_1 (真棒命令)");
+    ESP_LOGI(TAG, "  - 舵机2: GPIO_NUM_2 (纸巾/萝卜命令)");
     ESP_LOGI(TAG, "系统已就绪，持续监听命令词...");
     ESP_LOGI(TAG, "支持的指令:");
-    ESP_LOGI(TAG, "  - '真棒': 左右45度快速摇摆3次后复位");
-    ESP_LOGI(TAG, "  - '纸巾': 随机旋转45度或-90度");
-    ESP_LOGI(TAG, "  - '萝卜': 随机旋转45度或-90度");
+    ESP_LOGI(TAG, "  - '真棒': 舵机1左右45度快速摇摆3次后复位");
+    ESP_LOGI(TAG, "  - '纸巾': 舵机2交替摆动（45度/-90度）");
+    ESP_LOGI(TAG, "  - '萝卜': 舵机2交替摆动（45度/-90度）");
 
     // ========== 第六步：主循环 - 实时音频采集与命令词识别 ==========
     while (1)
@@ -373,25 +385,27 @@ extern "C" void app_main(void)
                     servo_controller.resetToCenter();
                     ESP_LOGI(TAG, "✓ 真棒命令执行完成，舵机已复位");
                 }
-                else if (command_id == COMMAND_ZHI_JIN)
+                else if (command_id == COMMAND_ZHI_JIN || command_id == COMMAND_LUO_BO)
                 {
-                    // 切换到另一个角度
-                    int next_angle = (last_alternating_angle == -90) ? 45 : -90;
-                    last_alternating_angle = next_angle;
+                    int target_angle;
+                    const char* angle_desc;
 
-                    ESP_LOGI(TAG, "执行纸巾命令 - 切换旋转到%d度", next_angle);
-                    servo_controller.rotate(next_angle);
-                    ESP_LOGI(TAG, "✓ 纸巾命令执行完成，舵机保持在当前位置");
-                }
-                else if (command_id == COMMAND_LUO_BO)
-                {
-                    // 切换到另一个角度
-                    int next_angle = (last_alternating_angle == -90) ? 45 : -90;
-                    last_alternating_angle = next_angle;
+                    if (last_alternate_angle_was_positive)
+                    {
+                        target_angle = -90;   // 这一次旋转到-90度
+                        angle_desc = "-90度";
+                        last_alternate_angle_was_positive = false;
+                    }
+                    else
+                    {
+                        target_angle = 45;    // 这一次旋转到45度
+                        angle_desc = "45度";
+                        last_alternate_angle_was_positive = true;
+                    }
 
-                    ESP_LOGI(TAG, "执行萝卜命令 - 切换旋转到%d度", next_angle);
-                    servo_controller.rotate(next_angle);
-                    ESP_LOGI(TAG, "✓ 萝卜命令执行完成，舵机保持在当前位置");
+                    ESP_LOGI(TAG, "执行%s命令 - 舵机2旋转到%s", cmd_desc, angle_desc);
+                    servo_controller_2.setAngle(target_angle);
+                    ESP_LOGI(TAG, "✓ %s命令执行完成，舵机2保持在%s位置", cmd_desc, angle_desc);
                 }
 
                 // 清理缓冲区，继续监听下一个命令
