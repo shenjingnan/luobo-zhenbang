@@ -38,8 +38,6 @@ extern "C"
 #include "model_path.h"             // 模型路径定义
 #include "bsp_board.h"              // 板级支持包，INMP441麦克风驱动
 #include "esp_log.h"                // ESP日志系统
-#include "mock_voices/light_on.h"   // 开灯音频数据文件
-#include "mock_voices/light_off.h"  // 关灯音频数据文件
 #include "driver/gpio.h"            // GPIO驱动
 #include "driver/ledc.h"            // LEDC PWM驱动，用于舵机控制
 }
@@ -49,8 +47,9 @@ extern "C"
 static const char *TAG = "舵机控制"; // 日志标签
 
 // 命令词ID定义（对应commands_cn.txt中的ID）
-#define COMMAND_TURN_OFF_LIGHT 308 // "帮我关灯"
-#define COMMAND_TURN_ON_LIGHT 309  // "帮我开灯"
+#define COMMAND_ZHEN_BANG 310      // "真棒"
+#define COMMAND_ZHI_JIN 311        // "纸巾"
+#define COMMAND_LUO_BO 312         // "萝卜"
 
 // 命令词配置结构体
 typedef struct
@@ -62,8 +61,9 @@ typedef struct
 
 // 自定义命令词列表
 static const command_config_t custom_commands[] = {
-    {COMMAND_TURN_ON_LIGHT, "bang wo kai deng", "帮我开灯"},
-    {COMMAND_TURN_OFF_LIGHT, "bang wo guan deng", "帮我关灯"},
+    {COMMAND_ZHEN_BANG, "zhen bang", "真棒"},
+    {COMMAND_ZHI_JIN, "zhi jin", "纸巾"},
+    {COMMAND_LUO_BO, "luo bo", "萝卜"},
 };
 
 #define CUSTOM_COMMANDS_COUNT (sizeof(custom_commands) / sizeof(custom_commands[0]))
@@ -331,7 +331,10 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "  - 命令词模型: %s", mn_name);
     ESP_LOGI(TAG, "  - 音频块大小: %d 字节", audio_chunksize);
     ESP_LOGI(TAG, "系统已就绪，持续监听命令词...");
-    ESP_LOGI(TAG, "支持的指令: '帮我开灯'（顺时针45°）、'帮我关灯'（逆时针45°）");
+    ESP_LOGI(TAG, "支持的指令:");
+    ESP_LOGI(TAG, "  - '真棒': 左右45度快速摇摆3次后复位");
+    ESP_LOGI(TAG, "  - '纸巾': 随机旋转45度或-90度");
+    ESP_LOGI(TAG, "  - '萝卜': 随机旋转45度或-90度");
 
     // ========== 第七步：主循环 - 实时音频采集与命令词识别 ==========
     while (1)
@@ -364,33 +367,42 @@ extern "C" void app_main(void)
                          command_id, prob, mn_result->string, cmd_desc);
 
                 // 处理命令
-                if (command_id == COMMAND_TURN_ON_LIGHT)
+                if (command_id == COMMAND_ZHEN_BANG)
                 {
-                    ESP_LOGI(TAG, "执行开灯命令 - 舵机顺时针旋转45度");
-                    servo_controller.rotate(45); // 顺时针旋转45度
-                    vTaskDelay(pdMS_TO_TICKS(800));
-                    servo_controller.rotate(-45); // 逆时针旋转45度回到原位
+                    ESP_LOGI(TAG, "执行真棒命令 - 左右45度快速摇摆");
 
-                    // 播放开灯确认音频
-                    esp_err_t audio_ret = bsp_play_audio(light_on, light_on_len);
-                    if (audio_ret == ESP_OK)
+                    // 左右快速摇摆3次
+                    for (int i = 0; i < 3; i++)
                     {
-                        ESP_LOGI(TAG, "✓ 舵机旋转确认音频播放成功");
+                        servo_controller.rotate(45);   // 向右45度
+                        vTaskDelay(pdMS_TO_TICKS(150));
+                        servo_controller.rotate(-90);  // 向左90度（相对当前位置）
+                        vTaskDelay(pdMS_TO_TICKS(150));
+                        servo_controller.rotate(45);   // 回到右45度
+                        vTaskDelay(pdMS_TO_TICKS(150));
                     }
+
+                    // 复位到中心位置
+                    servo_controller.resetToCenter();
+                    ESP_LOGI(TAG, "✓ 真棒命令执行完成，舵机已复位");
                 }
-                else if (command_id == COMMAND_TURN_OFF_LIGHT)
+                else if (command_id == COMMAND_ZHI_JIN)
                 {
-                    ESP_LOGI(TAG, "执行关灯命令 - 舵机逆时针旋转45度");
-                    servo_controller.rotate(-45); // 逆时针旋转45度
-                    vTaskDelay(pdMS_TO_TICKS(800));
-                    servo_controller.rotate(45); // 顺时针旋转45度回到原位
+                    // 随机选择旋转角度：45度或-90度
+                    int random_angle = (rand() % 2 == 0) ? 45 : -90;
 
-                    // 播放关灯确认音频
-                    esp_err_t audio_ret = bsp_play_audio(light_off, light_off_len);
-                    if (audio_ret == ESP_OK)
-                    {
-                        ESP_LOGI(TAG, "✓ 舵机旋转确认音频播放成功");
-                    }
+                    ESP_LOGI(TAG, "执行纸巾命令 - 随机旋转%d度", random_angle);
+                    servo_controller.rotate(random_angle);
+                    ESP_LOGI(TAG, "✓ 纸巾命令执行完成，舵机保持在当前位置");
+                }
+                else if (command_id == COMMAND_LUO_BO)
+                {
+                    // 随机选择旋转角度：45度或-90度
+                    int random_angle = (rand() % 2 == 0) ? 45 : -90;
+
+                    ESP_LOGI(TAG, "执行萝卜命令 - 随机旋转%d度", random_angle);
+                    servo_controller.rotate(random_angle);
+                    ESP_LOGI(TAG, "✓ 萝卜命令执行完成，舵机保持在当前位置");
                 }
 
                 // 清理缓冲区，继续监听下一个命令
