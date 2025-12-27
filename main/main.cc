@@ -72,6 +72,9 @@ static model_iface_data_t *mn_model_data = NULL;
 // 舵机控制器实例
 static ServoController servo_controller;
 
+// 用于"纸巾"和"萝卜"命令的切换状态
+static int last_alternating_angle = -90;  // 初始值为-90，下次将切换到45
+
 /**
  * @brief 配置自定义命令词
  *
@@ -372,20 +375,22 @@ extern "C" void app_main(void)
                 }
                 else if (command_id == COMMAND_ZHI_JIN)
                 {
-                    // 随机选择旋转角度：45度或-90度
-                    int random_angle = (rand() % 2 == 0) ? 45 : -90;
+                    // 切换到另一个角度
+                    int next_angle = (last_alternating_angle == -90) ? 45 : -90;
+                    last_alternating_angle = next_angle;
 
-                    ESP_LOGI(TAG, "执行纸巾命令 - 随机旋转%d度", random_angle);
-                    servo_controller.rotate(random_angle);
+                    ESP_LOGI(TAG, "执行纸巾命令 - 切换旋转到%d度", next_angle);
+                    servo_controller.rotate(next_angle);
                     ESP_LOGI(TAG, "✓ 纸巾命令执行完成，舵机保持在当前位置");
                 }
                 else if (command_id == COMMAND_LUO_BO)
                 {
-                    // 随机选择旋转角度：45度或-90度
-                    int random_angle = (rand() % 2 == 0) ? 45 : -90;
+                    // 切换到另一个角度
+                    int next_angle = (last_alternating_angle == -90) ? 45 : -90;
+                    last_alternating_angle = next_angle;
 
-                    ESP_LOGI(TAG, "执行萝卜命令 - 随机旋转%d度", random_angle);
-                    servo_controller.rotate(random_angle);
+                    ESP_LOGI(TAG, "执行萝卜命令 - 切换旋转到%d度", next_angle);
+                    servo_controller.rotate(next_angle);
                     ESP_LOGI(TAG, "✓ 萝卜命令执行完成，舵机保持在当前位置");
                 }
 
