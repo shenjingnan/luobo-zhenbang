@@ -387,25 +387,29 @@ extern "C" void app_main(void)
                 }
                 else if (command_id == COMMAND_ZHI_JIN || command_id == COMMAND_LUO_BO)
                 {
-                    int target_angle;
+                    int offset;           // 相对于90度的偏移量
                     const char* angle_desc;
+                    const int BASE_ANGLE = 90;  // 基准角度
 
                     if (last_alternate_angle_was_positive)
                     {
-                        target_angle = -90;   // 这一次旋转到-90度
-                        angle_desc = "-90度";
+                        offset = -90;   // 这一次偏移-90度
+                        angle_desc = "-90度偏移";
                         last_alternate_angle_was_positive = false;
                     }
                     else
                     {
-                        target_angle = 45;    // 这一次旋转到45度
-                        angle_desc = "45度";
+                        offset = 45;    // 这一次偏移+45度
+                        angle_desc = "+45度偏移";
                         last_alternate_angle_was_positive = true;
                     }
 
-                    ESP_LOGI(TAG, "执行%s命令 - 舵机2旋转到%s", cmd_desc, angle_desc);
+                    // 目标角度 = 基准角度(90度) + 偏移量
+                    int target_angle = BASE_ANGLE + offset;
+
+                    ESP_LOGI(TAG, "执行%s命令 - 舵机2旋转到%d度 (90度%s)", cmd_desc, target_angle, angle_desc);
                     servo_controller_2.setAngle(target_angle);
-                    ESP_LOGI(TAG, "✓ %s命令执行完成，舵机2保持在%s位置", cmd_desc, angle_desc);
+                    ESP_LOGI(TAG, "✓ %s命令执行完成，舵机2保持在%d度位置", cmd_desc, target_angle);
                 }
 
                 // 清理缓冲区，继续监听下一个命令
